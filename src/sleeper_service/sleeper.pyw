@@ -14,7 +14,7 @@ import ctypes
 from ctypes import wintypes
 from enum import StrEnum, Enum
 from pathlib import Path
-from subprocess import run as run_sub, Popen, CREATE_NO_WINDOW
+from subprocess import CalledProcessError, run as run_sub, Popen, CREATE_NO_WINDOW
 import sys
 from time import sleep
 import threading
@@ -58,6 +58,7 @@ USE_SYSTEM_TIMERS = "Use System Timers"
 SUSPEND_STATE = "Suspend state"
 SUSPEND_AFTER = "Suspend after"
 RESUME_PLAYBACK = "Resume playback"
+RESPECT_OTHER_WAKELOCKS = "Respect other wakelocks"
 SUSPEND_SOON = "Suspend now(-ish)!"
 EXIT = "Exit"
 
@@ -135,6 +136,8 @@ class Settings(BaseSettings):
     check_interval: int | float = 60  # seconds
     # Default state of resume playback button.
     resume_playback: bool = False
+    # Do not suspend while non-system power requests are active.
+    respect_other_wakelocks: bool = True
     # Wait time after resuming from sleep before trying to resume playback (s).
     resume_playback_delay: int = 1  # Seconds!
     suspend_button: bool = False
@@ -249,6 +252,8 @@ class SleeperService:
     _shared_enabled_state: bool
     _shared_use_system_state: bool
     _shared_resume_playback: bool
+    _shared_respect_other_wakelocks: bool
+    _is_elevated: bool
 
     _lock: threading.Lock
     _state_change: threading.Event
@@ -276,6 +281,7 @@ class SleeperService:
 
         # Process the settings.
         self._settings = settings
+        self._is_elevated = ctypes.windll.shell32.IsUserAnAdmin() != 0
 
         # Deal with settings that can only be modified by editing the settings file.
         self._check_interval = int(self._settings.check_interval)
@@ -286,6 +292,7 @@ class SleeperService:
         self._shared_enabled_state = self._settings.enabled
         self._shared_use_system_state = self._settings.use_system_timer
         self._shared_resume_playback = self._settings.resume_playback
+        self._shared_respect_other_wakelocks = self._settings.respect_other_wakelocks
 
         # Flag for quick suspend.
         self._quick_suspend = threading.Event()
@@ -321,6 +328,18 @@ class SleeperService:
             checked_callback=self._update_state,
             unchecked_callback=self._update_state,
         )
+        respect_other_wakelocks_label = RESPECT_OTHER_WAKELOCKS
+        if not self._is_elevated:
+            respect_other_wakelocks_label += " [Requires Admin Privileges]"
+        respect_other_wakelocks = CheckBox(
+            respect_other_wakelocks_label,
+            check_default=self._shared_respect_other_wakelocks,
+            checked_callback=self._update_state,
+            unchecked_callback=self._update_state,
+        )
+        if not self._is_elevated:
+            respect_other_wakelocks.disable()
+        self._menu_items[RESPECT_OTHER_WAKELOCKS] = respect_other_wakelocks
         if self._settings.suspend_button:
             self._menu_items[SUSPEND_SOON] = Button(
                 SUSPEND_SOON, callback=self._quick_suspend.set
@@ -364,6 +383,9 @@ class SleeperService:
             ].get_status()
             self._shared_resume_playback = self._menu_items[
                 RESUME_PLAYBACK
+            ].get_status()
+            self._shared_respect_other_wakelocks = self._menu_items[
+                RESPECT_OTHER_WAKELOCKS
             ].get_status()
 
             if tray_exit:
@@ -608,6 +630,7 @@ class SleeperService:
                 self._settings.enabled = self._shared_enabled_state
                 self._settings.use_system_timer = self._shared_use_system_state
                 self._settings.resume_playback = self._shared_resume_playback
+                self._settings.respect_other_wakelocks = self._shared_respect_other_wakelocks
                 # Save on the basis things might have changed. Will happen
                 # very infrequently.
                 self._settings.save()
@@ -672,11 +695,44 @@ class SleeperService:
 
     def _suspend_pending(self) -> bool:
         """Return true when idle time exceeds suspend time or quick suspend is set."""
-        return (
+        suspend_pending = (
             self._settings.enabled
             and not self._suspend_state == SuspendState.DISABLED
             and self.idle_time() > self._suspend_after
         ) or self._quick_suspend.is_set()
+        return suspend_pending and (
+            not self._settings.respect_other_wakelocks
+            or not self._is_elevated
+            or not self._other_wakelocks_active()
+        )
+
+    @staticmethod
+    def _other_wakelocks_active() -> bool:
+        """Return true when powercfg reports requests outside the System section."""
+        try:
+            output = run_sub(
+                "powercfg /requests",
+                check=True,
+                text=True,
+                capture_output=True,
+                creationflags=CREATE_NO_WINDOW,
+            ).stdout.splitlines()
+        except (OSError, CalledProcessError):
+            return False
+
+        current_section = ""
+        for line in output:
+            entry = line.strip()
+            if entry.endswith(":"):
+                current_section = entry[:-1].strip().casefold()
+            elif (
+                current_section
+                and current_section != "system"
+                and entry
+                and entry.casefold() != "none."
+            ):
+                return True
+        return False
 
     def main_loop(self) -> None:
         """Execute main loop for class."""

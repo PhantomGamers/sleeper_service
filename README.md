@@ -196,6 +196,9 @@ minute at most).
 - `resume_playback`: `true` or `false`. If true, sleeper service will try to check
 which apps were playing media before suspending and will try to resume playback after
 resuming from suspend. 
+- `respect_other_wakelocks`: `true` or `false`. If true, sleeper service will not
+suspend while `powercfg /requests` reports an active request outside the `SYSTEM`
+section. 
 - `resume_playback_delay`: How long sleeper service will wait after resuming from
 suspension before trying to restart playback. May be useful for players with long
 buffers that do not resume correctly. See 
@@ -216,6 +219,7 @@ manual_suspend_after = 600
 manual_suspend_state = "sleep"
 check_interval = 60
 resume_playback = false
+respect_other_wakelocks = true
 resume_playback_delay = 1
 suspend_button = false
 
