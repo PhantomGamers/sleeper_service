@@ -136,8 +136,22 @@ class Settings(BaseSettings):
     check_interval: int | float = 60  # seconds
     # Default state of resume playback button.
     resume_playback: bool = False
-    # Do not suspend while non-system power requests are active.
+    # Do not suspend while non-bypassed power requests are active.
     respect_other_wakelocks: bool = True
+    # Power request types mapped to "<request name> <section>" bypasses.
+    bypasses: dict[str, list[str]] = {
+        "driver": [
+            "BEACN Mic system",
+            "Elgato Virtual Audio system",
+            "Legacy Kernel Caller system",
+            "Razer Audio Mixer system",
+            "SteelSeries Sonar Virtual Audio Device system",
+            "TC-Helicon GoXLR Mini system",
+            "VB-Audio Virtual Cable system",
+            "VB-Audio Voicemeeter VAIO system",
+            "Virtual Audio Cable system",
+        ]
+    }
     # Wait time after resuming from sleep before trying to resume playback (s).
     resume_playback_delay: int = 1  # Seconds!
     suspend_button: bool = False
@@ -710,12 +724,12 @@ class SleeperService:
         return suspend_pending and (
             not self._settings.respect_other_wakelocks
             or not self._is_elevated
-            or not self._other_wakelocks_active()
+            or not self._other_wakelocks_active(self._settings.bypasses)
         )
 
     @staticmethod
-    def _other_wakelocks_active() -> bool:
-        """Return true when powercfg reports requests outside the System section."""
+    def _other_wakelocks_active(bypasses: dict[str, list[str]]) -> bool:
+        """Return true when powercfg reports requests not listed in the bypasses."""
         try:
             output = run_sub(
                 "powercfg /requests",
@@ -734,11 +748,46 @@ class SleeperService:
                 current_section = entry[:-1].strip().casefold()
             elif (
                 current_section
-                and current_section != "system"
                 and entry
                 and entry.casefold() != "none."
             ):
-                return True
+                if not (entry.startswith("[") and "]" in entry):
+                    continue
+
+                request_type, _, request_name = entry[1:].partition("]")
+                request_type = request_type.strip().casefold()
+                request_name = request_name.strip()
+
+                if not SleeperService._wakelock_is_bypassed(
+                    request_type, request_name, current_section, bypasses
+                ):
+                    return True
+        return False
+
+    @staticmethod
+    def _wakelock_is_bypassed(
+        request_type: str,
+        request_name: str,
+        section: str,
+        bypasses: dict[str, list[str]],
+    ) -> bool:
+        """Return true when a request matches a configured type, name, and section."""
+        for bypass_type, entries in bypasses.items():
+            if bypass_type.casefold() != request_type:
+                continue
+
+            for bypass in entries:
+                bypass_name, separator, bypass_section = bypass.rpartition(" ")
+                if not separator or bypass_section.casefold() != section:
+                    continue
+
+                normalized_name = request_name.casefold()
+                normalized_bypass_name = bypass_name.casefold()
+                if normalized_name == normalized_bypass_name or normalized_name.startswith(
+                    f"{normalized_bypass_name} ("
+                ):
+                    return True
+
         return False
 
     def main_loop(self) -> None:

@@ -197,8 +197,26 @@ minute at most).
 which apps were playing media before suspending and will try to resume playback after
 resuming from suspend. 
 - `respect_other_wakelocks`: `true` or `false`. If true, sleeper service will not
-suspend while `powercfg /requests` reports an active request outside the `SYSTEM`
-section. 
+suspend while `powercfg /requests` reports an active request, except for requests
+listed in `[bypasses]`.
+- `[bypasses]`: Optional lists of ignored power requests for use with `respect_other_wakelocks`, grouped by request type. Each
+entry is the request name followed by its `powercfg /requests` section. Request names
+are case insensitive; the device instance paths in parentheses are
+ignored. The default bypasses include Elgato Virtual Audio, `Legacy Kernel Caller`, SteelSeries
+Sonar, VB-Audio Virtual Cable, VB-Audio VoiceMeeter VAIO, and Virtual Audio
+Cable drivers in the `SYSTEM` section. You can add or remove entries in the config file.
+For example:
+  ```
+  [bypasses]
+  driver = [
+    "Elgato Virtual Audio system",
+    "Legacy Kernel Caller system",
+    "SteelSeries Sonar Virtual Audio Device system",
+    "VB-Audio Virtual Cable system",
+  ]
+  ```
+  Requests in other sections and requests that do not match a bypass still prevent
+  suspension when `respect_other_wakelocks` is enabled.
 - `resume_playback_delay`: How long sleeper service will wait after resuming from
 suspension before trying to restart playback. May be useful for players with long
 buffers that do not resume correctly. See 
@@ -220,6 +238,16 @@ resume_playback = false
 respect_other_wakelocks = true
 resume_playback_delay = 1
 suspend_button = false
+
+[bypasses]
+driver = [
+    "Elgato Virtual Audio system",
+    "Legacy Kernel Caller system",
+    "SteelSeries Sonar Virtual Audio Device system",
+    "VB-Audio Virtual Cable system",
+    "VB-Audio VoiceMeeter VAIO system",
+    "Virtual Audio Cable system",
+]
 
 [restarts]
 ```
