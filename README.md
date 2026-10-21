@@ -153,7 +153,7 @@ delay of 15-20 seconds works (irritating, but at least it works).
 If you need to force suspend frequently for testing or other reasons, you can enable
 a `Suspend now(-ish)!` button on the interface by editing the `config.toml` file and
 setting `suspend_button=true` (this option is not available from the UI). When you hit
-the button, the system will suspend at the end of the next `check_interval` (see
+the button, the system will attempt to suspend regardless of most recent user input (see
 [Configuration file](#configuration-file)). 
 
 There are a few other configuration parameters, but these only be changed by editing the
@@ -204,10 +204,8 @@ suspension before trying to restart playback. May be useful for players with lon
 buffers that do not resume correctly. See 
 [Installation and Usage](#installation-and-usage).
 - `suspend_button`: when `true`, the tray menu includes a "Suspend now(-ish)!" button
-that will suspend the system at the end of the next `check_interval`. Great for testing!
-Suspend was immediate in **v0.11.0**, but from **v0.20.0** it is included in the event
-loop to ensure it correctly triggers things like resuming media playback. The button is
-not displayed if `false`.
+that will suspend the system immediately, regardless of last user input. Great for testing!
+The button is not displayed if `false`.
 - `[restarts]`: See 
 [Beta: App/program Launch on Resume](#beta-appprogram-launch-on-resume).
 

@@ -59,7 +59,7 @@ SUSPEND_STATE = "Suspend state"
 SUSPEND_AFTER = "Suspend after"
 RESUME_PLAYBACK = "Resume playback"
 RESPECT_OTHER_WAKELOCKS = "Respect other wakelocks"
-SUSPEND_SOON = "Suspend now(-ish)!"
+SUSPEND_SOON = "Suspend now!"
 EXIT = "Exit"
 
 
@@ -296,6 +296,7 @@ class SleeperService:
 
         # Flag for quick suspend.
         self._quick_suspend = threading.Event()
+        self._loop_wakeup = threading.Event()
 
         # And build the system tray.
         self._create_tray()
@@ -342,7 +343,7 @@ class SleeperService:
         self._menu_items[RESPECT_OTHER_WAKELOCKS] = respect_other_wakelocks
         if self._settings.suspend_button:
             self._menu_items[SUSPEND_SOON] = Button(
-                SUSPEND_SOON, callback=self._quick_suspend.set
+                SUSPEND_SOON, callback=self._request_quick_suspend
             )
 
         self._menu_items[EXIT] = Button(EXIT, callback=self._update_state, args=(True,))
@@ -370,6 +371,11 @@ class SleeperService:
         else:
             self._tray.set_icon(DISABLED)
 
+    def _request_quick_suspend(self) -> None:
+        """Queue a quick suspend and wake the service loop immediately."""
+        self._quick_suspend.set()
+        self._loop_wakeup.set()
+
     def _update_state(self, tray_exit: bool = False) -> None:
         """Update states and update flag to notify sleeper service of state change."""
         with self._lock:
@@ -396,6 +402,7 @@ class SleeperService:
                 # the tray manager loop ends and the tray manager loop is terminated.
                 self._tray.kill()
                 self._exit_flag = True
+                self._loop_wakeup.set()
 
         # Notify sleeper service of state change.
         self._state_change.set()
@@ -743,7 +750,8 @@ class SleeperService:
         manager = MediaManager.request_async().get()
 
         while self._check_state():
-            sleep(self._check_interval)
+            self._loop_wakeup.wait(self._check_interval)
+            self._loop_wakeup.clear()
             if self._suspend_pending():
                 if self._settings.resume_playback:
                     # Get media player states.
@@ -782,12 +790,12 @@ class SleeperService:
                             Popen(program)
                     ##############################################################
 
+                    # Clear the quick suspend before the cooldown so new requests are respected.
+                    self._quick_suspend.clear()
+
                     # Finally, sleep for 1 minute to allow for some user input and
                     # prevent firing a quick succession second sleep.
                     sleep(M_TO_SECONDS)
-
-                # Finally, clear the quick suspend in case it was set previously.
-                self._quick_suspend.clear()
 
 
 def single_instance() -> bool:
